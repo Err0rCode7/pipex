@@ -53,7 +53,7 @@ clean :
 			$(RM) $(OBJS) $(BONUS_OBJS)
 
 fclean :	clean
-			make clean -C libft
+			make fclean -C libft
 			$(RM) $(NAME) libft.a
 
 re :		fclean all

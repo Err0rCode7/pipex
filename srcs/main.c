@@ -19,6 +19,8 @@ typedef struct		s_pipe
 	int			index;
 	pid_t		pid;
 	int			pipefd[2];
+	int			pipefd_2[2];
+	int			used_pipe;
 	t_cmd		cmd_arg;
 }					t_pipe;
 
@@ -65,14 +67,6 @@ static void		connect_pipe(int pipefd[2], int io)
 	close(pipefd[1]);
 }
 
-static void		connect_pipe_double(int pipefd[2], int i, int o)
-{
-	dup2(pipefd[i], i);
-	dup2(pipefd[o], o);
-	close(pipefd[0]);
-	close(pipefd[1]);
-}
-
 static void		cmd_init(const char *cmd, t_cmd *strt)
 {
 	char **chunk;
@@ -100,6 +94,21 @@ static void		run_cmd(const char *cmd, t_cmd *cmd_arg)
 	exit(1);
 }
 
+void			use_pipe(int io, t_pipe *pipe_vars)
+{
+	if (pipe_vars->used_pipe == 1)
+	{
+		connect_pipe(pipe_vars->pipefd_2, io);
+		pipe_vars->used_pipe = 2;
+	}
+	else
+	{
+		connect_pipe(pipe_vars->pipefd, io);
+		pipe_vars->used_pipe = 1;
+	}
+	
+}
+
 int				run_child(t_pipe *pipe_vars)
 {
 	pid_t	pid;
@@ -107,7 +116,7 @@ int				run_child(t_pipe *pipe_vars)
 	if (pipe_vars->index == 2)
 	{
 		printf("test4 go %d\n", getpid());
-		connect_pipe(pipe_vars->pipefd, STDOUT_FILENO);
+		use_pipe(STDOUT_FILENO, pipe_vars);
 		redirect_in(pipe_vars->av[pipe_vars->index - 1]);
 		run_cmd(pipe_vars->av[pipe_vars->index], &pipe_vars->cmd_arg);
 	}
@@ -117,21 +126,21 @@ int				run_child(t_pipe *pipe_vars)
 			exit(1);
 		if (pid > 0)
 		{
-			fprintf(g_fd, "pid \n");
 			printf("test2 wait %d\n", getpid());
 			waitpid(pid, &pipe_vars->status, 0);
 			if (WIFEXITED(pipe_vars->status) == 0)
 				exit(1);
 			printf("test2 go %d\n", getpid());
-			// connect_pipe(pipe_vars->pipefd, STDOUT_FILENO);
-			// connect_pipe(pipe_vars->pipefd, STDIN_FILENO);
-			connect_pipe_double(pipe_vars->pipefd, STDIN_FILENO, STDOUT_FILENO);
+			// use_pipe(STDOUT_FILENO, pipe_vars);
+			use_pipe(STDIN_FILENO, pipe_vars);
 			run_cmd(pipe_vars->av[pipe_vars->index], &pipe_vars->cmd_arg);
 		}
 		else if (pid == CHILD)
 		{
-			printf("test3 %d\n", getpid());
-			fprintf(g_fd, "pid \n");
+			if (pipe_vars->used_pipe == 1)
+				pipe_vars->used_pipe = 2;
+			else
+				pipe_vars->used_pipe = 1;
 			pipe_vars->index -= 1;
 			run_child(pipe_vars);
 		}
@@ -151,6 +160,8 @@ int				main(int argc, char const *argv[])
 		return (0);
 	if (pipe(pipe_vars.pipefd) == -1)
 		exit(1);
+	if (pipe(pipe_vars.pipefd_2) == -1)
+		exit(1);
 	if ((pipe_vars.pid = fork()) < 0)
 		exit(1);
 	if (pipe_vars.pid > 0)
@@ -161,7 +172,8 @@ int				main(int argc, char const *argv[])
 			exit(1);
 		printf("test1 go %d\n", getpid());
 		redirect_out(argv[argc - 1]);
-		connect_pipe(pipe_vars.pipefd, STDIN_FILENO);
+		use_pipe(STDIN_FILENO, &pipe_vars);
+		// connect_pipe(pipe_vars.pipefd, STDIN_FILENO);
 		run_cmd(argv[argc - 2], &pipe_vars.cmd_arg);
 	}
 	else if (pipe_vars.pid == CHILD)
