@@ -17,16 +17,13 @@ typedef struct		s_pipe
 	char const	**av;
 	int			status;
 	int			index;
+	int			index_i;
 	pid_t		pid;
-	int			pipefd[2];
-	int			pipefd_2[2];
-	int			used_pipe;
+	int			*pipefd;
 	t_cmd		cmd_arg;
 }					t_pipe;
 
 # define CHILD 0
-
-FILE*		g_fd;
 
 extern char		**environ;
 
@@ -94,19 +91,17 @@ static void		run_cmd(const char *cmd, t_cmd *cmd_arg)
 	exit(1);
 }
 
-void			use_pipe(int io, t_pipe *pipe_vars)
+static void		close_pre_pipes(int count, t_pipe *pipe_var)
 {
-	if (pipe_vars->used_pipe == 1)
+	int i;
+
+	i = 0;
+	while (i < count)
 	{
-		connect_pipe(pipe_vars->pipefd_2, io);
-		pipe_vars->used_pipe = 2;
+		close(pipe_var->pipefd[pipe_var->argc - 2 - i]);
+		close(pipe_var->pipefd[pipe_var->argc - 2 - i]);
+		i++;
 	}
-	else
-	{
-		connect_pipe(pipe_vars->pipefd, io);
-		pipe_vars->used_pipe = 1;
-	}
-	
 }
 
 int				run_child(t_pipe *pipe_vars)
@@ -115,9 +110,9 @@ int				run_child(t_pipe *pipe_vars)
 
 	if (pipe_vars->index == 2)
 	{
-		printf("test4 go %d\n", getpid());
-		use_pipe(STDOUT_FILENO, pipe_vars);
+		close_pre_pipes(pipe_vars->argc - 2, pipe_vars);
 		redirect_in(pipe_vars->av[pipe_vars->index - 1]);
+		connect_pipe(pipe_vars->pipefd, STDOUT_FILENO);
 		run_cmd(pipe_vars->av[pipe_vars->index], &pipe_vars->cmd_arg);
 	}
 	else if (pipe_vars->index > 2)
@@ -126,21 +121,16 @@ int				run_child(t_pipe *pipe_vars)
 			exit(1);
 		if (pid > 0)
 		{
-			printf("test2 wait %d\n", getpid());
 			waitpid(pid, &pipe_vars->status, 0);
 			if (WIFEXITED(pipe_vars->status) == 0)
 				exit(1);
-			printf("test2 go %d\n", getpid());
-			// use_pipe(STDOUT_FILENO, pipe_vars);
-			use_pipe(STDIN_FILENO, pipe_vars);
+			close_pre_pipes(pipe_vars->index - 2, pipe_vars);
+			connect_pipe(pipe_vars->pipefd + (pipe_vars->index) * 2, STDIN_FILENO);
+			connect_pipe(pipe_vars->pipefd + (pipe_vars->index) * 2, STDOUT_FILENO);
 			run_cmd(pipe_vars->av[pipe_vars->index], &pipe_vars->cmd_arg);
 		}
 		else if (pid == CHILD)
 		{
-			if (pipe_vars->used_pipe == 1)
-				pipe_vars->used_pipe = 2;
-			else
-				pipe_vars->used_pipe = 1;
 			pipe_vars->index -= 1;
 			run_child(pipe_vars);
 		}
@@ -151,34 +141,36 @@ int				run_child(t_pipe *pipe_vars)
 int				main(int argc, char const *argv[])
 {
 	t_pipe	pipe_vars;
+	int		*pipe_fd;
+	int		i;
 
+	if (argc < 4)
+		return (0);
 	pipe_vars.argc = argc;
 	pipe_vars.av = argv;
 	pipe_vars.index = argc - 3;
-	g_fd = fopen("result.txt", "w");
-	if (argc < 4)
-		return (0);
-	if (pipe(pipe_vars.pipefd) == -1)
-		exit(1);
-	if (pipe(pipe_vars.pipefd_2) == -1)
-		exit(1);
 	if ((pipe_vars.pid = fork()) < 0)
 		exit(1);
+	// pipe를 커맨드 개수만큼 만든다.
+	pipe_vars.pipefd = malloc (2 * sizeof(int) * (argc - 3));
+	i = 0;
+	pipe_fd = pipe_vars.pipefd;
+	while (i < argc - 2)
+	{
+		if (pipe(pipe_fd) < 0)
+			pipe_fd += 2;
+		i++;
+	}
 	if (pipe_vars.pid > 0)
 	{
-		printf("test1 %d\n", getpid());
 		waitpid(pipe_vars.pid, &pipe_vars.status, 0);
 		if (WIFEXITED(pipe_vars.status) == 0)
 			exit(1);
-		printf("test1 go %d\n", getpid());
 		redirect_out(argv[argc - 1]);
-		use_pipe(STDIN_FILENO, &pipe_vars);
-		// connect_pipe(pipe_vars.pipefd, STDIN_FILENO);
+		connect_pipe(pipe_fd + (argc - 3) * 2, STDIN_FILENO);
 		run_cmd(argv[argc - 2], &pipe_vars.cmd_arg);
 	}
 	else if (pipe_vars.pid == CHILD)
-	{
 		run_child(&pipe_vars);
-	}
 	return (0);
 }
