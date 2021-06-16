@@ -3,7 +3,9 @@ NAME		= pipex
 HEADER		= -I includes -I libft
 
 SRCS_DIR	= ./srcs
-SRCS_NAME	= main.c
+SRCS_NAME	= main.c \
+				get_next_line_bonus.c \
+				get_next_line_utils_bonus.c
 SRCS		= $(addprefix $(SRCS_DIR)/, $(SRCS_NAME))
 OBJS		= $(SRCS:.c=.o)
 
@@ -41,7 +43,7 @@ all :		$(NAME)
 
 $(NAME) :	$(OBJS)
 			make -C libft
-			cp libft/libft.a libft.a
+			cp ./libft/libft.a .
 			$(CC) $(CFLAGS) $^ libft.a -o $@
 
 # bonus	: 	$(BONUS_OBJS)
@@ -50,11 +52,12 @@ $(NAME) :	$(OBJS)
 # 			$(CC) $(CFLAGS) $^ libmlx.dylib -o $(NAME)
 
 clean :
+			make -C libft clean
 			$(RM) $(OBJS) $(BONUS_OBJS)
 
 fclean :	clean
-			make fclean -C libft
-			$(RM) $(NAME) libft.a
+			$(RM) libft.a
+			$(RM) $(NAME)
 
 re :		fclean all
 

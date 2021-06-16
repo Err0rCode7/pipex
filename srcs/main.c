@@ -1,36 +1,44 @@
-#include <stdlib.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <stdio.h>
-#include "libft.h"
+#include "pipe.h"
 
-typedef struct		s_cmd
+static void		connect_pipe(int pipefd[2], int io)
 {
-	const char		*cmd[6];
-	char * const	*argv;
-	char * const	*envp;
-}					t_cmd;
+	dup2(pipefd[io], io);
+	close(pipefd[0]);
+	close(pipefd[1]);
+}
 
-typedef struct		s_pipe
+int				here_doc(t_pipe *pipe_vars)
 {
-	int			argc;
-	char const	**av;
-	int			status;
-	int			index;
-	int			index_i;
-	pid_t		pid;
-	int			*pipefd;
-	t_cmd		cmd_arg;
-}					t_pipe;
+	char	*line;
+	int		*pipefd;
 
-# define CHILD 0
+	pipefd = pipe_vars->pipefd + (pipe_vars->pipe_index + 1) * 2;
+	if (pipe(pipefd) == -1)
+		exit(1);
+	while (1)
+	{
+		write(STDOUT_FILENO, "here_doc> ", 10);
+		if (get_next_line(STDIN_FILENO, &line) < 0)
+			exit(1);
+		if (ft_strncmp(pipe_vars->av[2], line,
+						ft_strlen((char *)pipe_vars->av[2]) + 1) == 0)
+			break ;
+		close(pipefd[STDOUT_FILENO]);
+		write(STDOUT_FILENO, line, ft_strlen(line));
+		write(pipefd[STDIN_FILENO], line, ft_strlen(line));
+		free(line);
+	}
+	free(line);
+	connect_pipe(pipefd, STDIN_FILENO);
+	return (1);
+}
 
-extern char		**environ;
-
-int				redirect_in(const char *file)
+int				redirect_in(const char *file, t_pipe *pipe_vars)
 {
 	int fd;
 
+	if (pipe_vars->is_double_redirection)
+		return (here_doc(pipe_vars));
 	fd = open(file, O_RDONLY);
 	if (fd < 0)
 	{
@@ -42,11 +50,14 @@ int				redirect_in(const char *file)
 	return (0);
 }
 
-int				redirect_out(const char *file)
+int				redirect_out(const char *file, t_pipe *pipe_vars)
 {
 	int fd;
 
-	fd = open(file, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	if (!pipe_vars->is_double_redirection)
+		fd = open(file, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	else
+		fd = open(file, O_RDWR | O_CREAT | O_APPEND, 0644);
 	if (fd < 0)
 	{
 		perror(file);
@@ -55,13 +66,6 @@ int				redirect_out(const char *file)
 	dup2(fd, STDOUT_FILENO);
 	close(fd);
 	return (0);
-}
-
-static void		connect_pipe(int pipefd[2], int io)
-{
-	dup2(pipefd[io], io);
-	close(pipefd[0]);
-	close(pipefd[1]);
 }
 
 static void		cmd_init(const char *cmd, t_cmd *strt)
@@ -86,37 +90,25 @@ static void		run_cmd(const char *cmd, t_cmd *cmd_arg)
 	i = 0;
 	cmd_init(cmd, cmd_arg);
 	while(i < 5)
-		execve(cmd_arg->cmd[i++], cmd_arg->argv, environ);
+		execve(cmd_arg->cmd[i++], cmd_arg->argv, cmd_arg->envp);
 	perror(cmd_arg->argv[0]);
 	exit(1);
-}
-
-static void		close_pre_pipes(int count, t_pipe *pipe_var)
-{
-	int i;
-
-	i = 0;
-	while (i < count)
-	{
-		close(pipe_var->pipefd[pipe_var->argc - 2 - i]);
-		close(pipe_var->pipefd[pipe_var->argc - 2 - i]);
-		i++;
-	}
 }
 
 int				run_child(t_pipe *pipe_vars)
 {
 	pid_t	pid;
 
-	if (pipe_vars->index == 2)
+	if (pipe_vars->index == 2 + pipe_vars->is_double_redirection)
 	{
-		close_pre_pipes(pipe_vars->argc - 2, pipe_vars);
-		redirect_in(pipe_vars->av[pipe_vars->index - 1]);
-		connect_pipe(pipe_vars->pipefd, STDOUT_FILENO);
+		redirect_in(pipe_vars->av[pipe_vars->index - 1], pipe_vars);
+		connect_pipe(pipe_vars->pipefd + pipe_vars->pipe_index * 2, STDOUT_FILENO);
 		run_cmd(pipe_vars->av[pipe_vars->index], &pipe_vars->cmd_arg);
 	}
-	else if (pipe_vars->index > 2)
+	else if (pipe_vars->index > 2 + pipe_vars->is_double_redirection)
 	{
+		if (pipe(pipe_vars->pipefd + ++pipe_vars->pipe_index * 2) == -1)
+			exit(1);
 		if ((pid = fork()) < 0)
 			exit(1);
 		if (pid > 0)
@@ -124,9 +116,8 @@ int				run_child(t_pipe *pipe_vars)
 			waitpid(pid, &pipe_vars->status, 0);
 			if (WIFEXITED(pipe_vars->status) == 0)
 				exit(1);
-			close_pre_pipes(pipe_vars->index - 2, pipe_vars);
-			connect_pipe(pipe_vars->pipefd + (pipe_vars->index) * 2, STDIN_FILENO);
-			connect_pipe(pipe_vars->pipefd + (pipe_vars->index) * 2, STDOUT_FILENO);
+			connect_pipe(pipe_vars->pipefd + (pipe_vars->pipe_index - 1) * 2, STDOUT_FILENO);
+			connect_pipe(pipe_vars->pipefd + pipe_vars->pipe_index * 2, STDIN_FILENO);
 			run_cmd(pipe_vars->av[pipe_vars->index], &pipe_vars->cmd_arg);
 		}
 		else if (pid == CHILD)
@@ -138,39 +129,49 @@ int				run_child(t_pipe *pipe_vars)
 	return (1);
 }
 
-int				main(int argc, char const *argv[])
-{
-	t_pipe	pipe_vars;
-	int		*pipe_fd;
-	int		i;
+// cmd << test | cmd >> out
 
-	if (argc < 4)
-		return (0);
-	pipe_vars.argc = argc;
-	pipe_vars.av = argv;
-	pipe_vars.index = argc - 3;
+void			proc_pipe(t_pipe pipe_vars)
+{
+	if (!(pipe_vars.pipefd = malloc(2 * sizeof(int) *
+		(pipe_vars.argc - 4))))
+		exit(1);
+	if (pipe(pipe_vars.pipefd) == -1)
+		exit(1);
 	if ((pipe_vars.pid = fork()) < 0)
 		exit(1);
-	// pipe를 커맨드 개수만큼 만든다.
-	pipe_vars.pipefd = malloc (2 * sizeof(int) * (argc - 3));
-	i = 0;
-	pipe_fd = pipe_vars.pipefd;
-	while (i < argc - 2)
-	{
-		if (pipe(pipe_fd) < 0)
-			pipe_fd += 2;
-		i++;
-	}
 	if (pipe_vars.pid > 0)
 	{
 		waitpid(pipe_vars.pid, &pipe_vars.status, 0);
 		if (WIFEXITED(pipe_vars.status) == 0)
+		{
+			printf("exit\n");
 			exit(1);
-		redirect_out(argv[argc - 1]);
-		connect_pipe(pipe_fd + (argc - 3) * 2, STDIN_FILENO);
-		run_cmd(argv[argc - 2], &pipe_vars.cmd_arg);
+		}
+		redirect_out(pipe_vars.av[pipe_vars.argc - 1], &pipe_vars);
+		connect_pipe(pipe_vars.pipefd, STDIN_FILENO);
+		run_cmd(pipe_vars.av[pipe_vars.argc - 2], &pipe_vars.cmd_arg);
 	}
 	else if (pipe_vars.pid == CHILD)
+	{
+		pipe_vars.index -= 1;
 		run_child(&pipe_vars);
+	}
+}
+
+int				main(int argc, char const *argv[])
+{
+	t_pipe	pipe_vars;
+
+	pipe_vars.argc = argc;
+	pipe_vars.av = argv;
+	pipe_vars.index = argc - 2;
+	pipe_vars.pipe_index = 0;
+	pipe_vars.is_double_redirection = 0;
+	if (argc < 4)
+		return (0);
+	if ((ft_strncmp(argv[1], "here_doc", ft_strlen("here_doc") + 1)) == 0)
+		pipe_vars.is_double_redirection = 1;
+	proc_pipe(pipe_vars);
 	return (0);
 }
