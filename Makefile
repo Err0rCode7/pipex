@@ -56,6 +56,7 @@ clean :
 			$(RM) $(OBJS) $(BONUS_OBJS)
 
 fclean :	clean
+			make -C libft fclean
 			$(RM) libft.a
 			$(RM) $(NAME)
 
